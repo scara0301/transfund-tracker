@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Logo from "@/components/Logo";
 import { clearStoredUser } from "@/lib/api";
 import {
-  LayoutDashboard, FolderKanban, PlusCircle, Receipt, Settings, LogOut,
+  LayoutDashboard, FolderKanban, PlusCircle, Receipt, Settings, LogOut, ShieldCheck, Blocks,
 } from "lucide-react";
 
 export default function OrganizerLayout({ children }: { children: React.ReactNode }) {
@@ -17,6 +17,8 @@ export default function OrganizerLayout({ children }: { children: React.ReactNod
     { label: "Campaigns",       href: "/organizer/campaigns", icon: FolderKanban },
     { label: "Create Campaign", href: "/organizer/create",    icon: PlusCircle },
     { label: "Donations",       href: "/organizer/donations", icon: Receipt },
+    { label: "Trust & Safety",  href: "/organizer/insights",  icon: ShieldCheck },
+    { label: "Ledger Explorer", href: "/explorer",            icon: Blocks },
     { label: "Settings",        href: "/organizer/settings",  icon: Settings },
   ];
 
@@ -69,7 +71,7 @@ export default function OrganizerLayout({ children }: { children: React.ReactNod
             <LogOut size={17} />
             <span className="text-sm font-semibold">Logout</span>
           </button>
-          <p className="text-xs text-gray-400 text-center mt-3">v1.0 • TransFund Tracker</p>
+          <p className="text-xs text-gray-400 text-center mt-3">v2.0 • TransFund</p>
         </div>
       </aside>
 

@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { getCampaign, makeDonation, getCampaignDonations, getStoredUser, fmtINR, fmtDate, fileUrl } from "@/lib/api";
-import { ArrowLeft, Users, Heart, CheckCircle, Target, TrendingUp, Clock } from "lucide-react";
+import { getCampaign, getCampaignDonations, getStoredUser, fmtINR, fmtDate, fileUrl } from "@/lib/api";
+import { ArrowLeft, Users, Heart, CheckCircle, Target, TrendingUp, Clock, Blocks } from "lucide-react";
 import Link from "next/link";
 import CampaignUpdatesFeed from "@/components/CampaignUpdatesFeed";
+import DonateModal from "@/components/DonateModal";
+import MilestoneTimeline from "@/components/MilestoneTimeline";
+import RiskBadge from "@/components/RiskBadge";
 
 const CATEGORY_META: Record<string, { emoji: string; gradient: string }> = {
   Education:  { emoji: "🎓", gradient: "from-blue-400 to-indigo-500" },
@@ -27,6 +30,7 @@ type Campaign = {
   status: string;
   image_url: string | null;
   created_at: string;
+  risk_score?: number | null;
 };
 
 type Donation = {
@@ -36,8 +40,6 @@ type Donation = {
   amount: number;
   donated_at: string;
 };
-
-const QUICK_AMOUNTS = [500, 1000, 2000, 5000];
 
 export default function DonorCampaignDetails({
   params,
@@ -52,9 +54,7 @@ export default function DonorCampaignDetails({
 
   const [showModal, setShowModal] = useState(false);
   const [donateAmount, setDonateAmount] = useState("");
-  const [donating, setDonating] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [donateError, setDonateError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const [limitPopup, setLimitPopup] = useState<{ limit: string; remaining: string } | null>(null);
 
   const user = getStoredUser();
@@ -75,38 +75,6 @@ export default function DonorCampaignDetails({
   };
 
   useEffect(() => { loadData(); }, [id]);
-
-  const handleDonate = async () => {
-    const amount = parseFloat(donateAmount);
-    if (!amount || amount <= 0) return setDonateError("Enter a valid amount");
-    if (!user) return setDonateError("Please log in to donate");
-
-    setDonating(true);
-    setDonateError("");
-    try {
-      await makeDonation({
-        campaign_id: Number(id),
-        donor_name: user.name,
-        donor_email: user.email,
-        amount,
-      });
-      setSuccess(true);
-      setDonateAmount("");
-      await loadData();
-      setTimeout(() => { setSuccess(false); setShowModal(false); }, 2000);
-    } catch (err: any) {
-      const msg: string = err?.message || "";
-      if (msg.startsWith("DAILY_LIMIT_REACHED|")) {
-        const [, limit, remaining] = msg.split("|");
-        setShowModal(false);
-        setLimitPopup({ limit, remaining });
-      } else {
-        setDonateError(msg || "Failed to process donation. Try again.");
-      }
-    } finally {
-      setDonating(false);
-    }
-  };
 
   if (loading) return (
     <div className="space-y-6 max-w-4xl mx-auto animate-pulse">
@@ -176,7 +144,10 @@ export default function DonorCampaignDetails({
 
         {/* Body */}
         <div className="p-8">
-          <h1 className="text-2xl font-extrabold text-gray-900 mb-3">{campaign.title}</h1>
+          <div className="flex flex-wrap items-start gap-3 mb-3">
+            <h1 className="text-2xl font-extrabold text-gray-900 flex-1">{campaign.title}</h1>
+            {(campaign.risk_score ?? 0) >= 30 && <RiskBadge score={campaign.risk_score} />}
+          </div>
           <p className="text-gray-500 leading-relaxed mb-7">{campaign.description}</p>
 
           {/* Stats row */}
@@ -240,6 +211,19 @@ export default function DonorCampaignDetails({
           )}
         </div>
       </div>
+
+      {/* ── Milestone escrow + voting ── */}
+      <MilestoneTimeline key={refreshKey} campaignId={Number(id)} mode="donor" userEmail={user?.email} />
+
+      <Link href={`/donor/tracking/${id}`}
+        className="flex items-center gap-4 bg-white rounded-3xl border border-gray-100 shadow-sm p-5 hover:border-indigo-200 transition group">
+        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white flex items-center justify-center"><Blocks size={20} /></div>
+        <div className="flex-1">
+          <p className="font-extrabold text-gray-900 group-hover:text-indigo-600 transition">Where is the money going?</p>
+          <p className="text-xs text-gray-400">Every expense with its invoice, AI fraud check, and the verifiable blockchain ledger.</p>
+        </div>
+        <span className="text-indigo-600 font-bold text-sm">Track funds →</span>
+      </Link>
 
       {/* ── Recent Donors ── */}
       {donations.length > 0 && (
@@ -327,101 +311,14 @@ export default function DonorCampaignDetails({
 
       {/* ── Donate Modal ── */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden"
-            style={{ boxShadow: "0 32px 80px rgba(0,0,0,0.15), 0 8px 24px rgba(0,185,100,0.1)" }}>
-
-            {/* Gradient top bar */}
-            <div className="h-1.5 w-full" style={{ background: "linear-gradient(90deg,#00b964,#00d4aa,#0069ff)" }} />
-
-            <div className="p-8">
-              {success ? (
-                <div className="text-center py-6">
-                  <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle size={36} className="text-[#00b964]" />
-                  </div>
-                  <h3 className="text-xl font-extrabold text-gray-900 mb-1">Thank you! 🎉</h3>
-                  <p className="text-gray-400 text-sm">Your donation has been recorded.</p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <h3 className="text-xl font-extrabold text-gray-900">Make a Donation</h3>
-                      <p className="text-sm text-gray-400 mt-1 line-clamp-1">{campaign.title}</p>
-                    </div>
-                    <button
-                      onClick={() => { setShowModal(false); setDonateError(""); }}
-                      className="text-gray-300 hover:text-gray-600 text-2xl font-bold leading-none transition"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  {/* Quick amount chips */}
-                  <p className="text-xs font-semibold text-gray-400 uppercase mb-2 tracking-wider">Quick Select</p>
-                  <div className="grid grid-cols-4 gap-2 mb-4">
-                    {QUICK_AMOUNTS.map((amt) => (
-                      <button
-                        key={amt}
-                        onClick={() => setDonateAmount(String(amt))}
-                        className={`py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${
-                          donateAmount === String(amt)
-                            ? "border-[#00b964] bg-green-50 text-[#00b964]"
-                            : "border-gray-100 bg-gray-50 text-gray-600 hover:border-[#00b964] hover:text-[#00b964]"
-                        }`}
-                      >
-                        {fmtINR(amt)}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Custom amount */}
-                  <div className="relative mb-4">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-semibold text-sm">₹</span>
-                    <input
-                      id="donate-amount"
-                      type="number"
-                      min="1"
-                      value={donateAmount}
-                      onChange={(e) => setDonateAmount(e.target.value)}
-                      placeholder="Enter custom amount"
-                      className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 bg-gray-50 rounded-2xl text-sm focus:outline-none focus:border-[#00b964] focus:bg-white transition-all"
-                    />
-                  </div>
-
-                  {donateError && (
-                    <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 mb-4">
-                      <span className="text-xs">⚠️</span>
-                      <p className="text-red-600 text-xs">{donateError}</p>
-                    </div>
-                  )}
-
-                  <button
-                    id="btn-confirm-donate"
-                    onClick={handleDonate}
-                    disabled={donating}
-                    className="w-full flex items-center justify-center gap-2 text-white py-3.5 rounded-2xl font-bold text-sm disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-                    style={{
-                      background: donating ? "#9ca3af" : "linear-gradient(135deg,#00b964,#00d4aa)",
-                      boxShadow: donating ? "none" : "0 8px 20px rgba(0,185,100,0.35)",
-                    }}
-                  >
-                    {donating ? (
-                      <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Processing…</>
-                    ) : (
-                      <><Heart size={15} /> {donateAmount ? `Donate ${fmtINR(parseFloat(donateAmount))}` : "Confirm Donation"}</>
-                    )}
-                  </button>
-
-                  <p className="text-xs text-gray-400 text-center mt-3">
-                    Donating as <span className="font-semibold text-gray-600">{user?.name || "Guest"}</span> · {user?.email}
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <DonateModal
+          campaign={campaign}
+          user={user}
+          initialAmount={donateAmount}
+          onClose={() => { setShowModal(false); setDonateAmount(""); }}
+          onDonated={() => { loadData(); setRefreshKey((k) => k + 1); }}
+          onLimit={(limit, remaining) => { setShowModal(false); setLimitPopup({ limit, remaining }); }}
+        />
       )}
 
     </div>

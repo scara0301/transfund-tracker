@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { createCampaign, getStoredUser } from "@/lib/api";
-import { UploadCloud, Image as ImageIcon, X, PlusCircle, ShieldCheck } from "lucide-react";
+import { createCampaign, getStoredUser, campaignPrecheck, type RiskResult } from "@/lib/api";
+import { UploadCloud, Image as ImageIcon, X, ShieldCheck, Flag, Brain } from "lucide-react";
+import MilestoneEditor, { type DraftMilestone } from "@/components/MilestoneEditor";
+import RiskBadge, { RiskSignals } from "@/components/RiskBadge";
 import { useRouter } from "next/navigation";
 
 const CATEGORIES = ["Education", "Medical", "Events", "NGOs", "Community", "Emergency", "Others"];
@@ -29,6 +31,9 @@ export default function CreateCampaignPage() {
   const [dailyLimit, setDailyLimit]   = useState("");
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState("");
+  const [useEscrow, setUseEscrow]     = useState(true);
+  const [milestones, setMilestones]   = useState<DraftMilestone[]>([]);
+  const [precheck, setPrecheck]       = useState<RiskResult | null>(null);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) {
@@ -44,7 +49,9 @@ export default function CreateCampaignPage() {
     setPreviewUrl(null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const plan = useEscrow ? milestones.filter((m) => m.title.trim() || m.amount) : [];
+
+  const handleSubmit = async (e: React.FormEvent, force = false) => {
     e.preventDefault();
     setError("");
 
@@ -52,9 +59,18 @@ export default function CreateCampaignPage() {
     if (!user || user.role !== "organizer") return setError("You must be logged in as an organizer.");
     if (!title.trim() || !description.trim() || !goal) return setError("Please fill in all required fields.");
     if (limitEnabled && (!dailyLimit || parseFloat(dailyLimit) <= 0)) return setError("Enter a valid daily donation limit.");
+    if (plan.some((m) => !m.title.trim() || !(Number(m.amount) > 0))) return setError("Every milestone needs a title and an amount.");
+    if (plan.reduce((s, m) => s + Number(m.amount), 0) > parseFloat(goal)) return setError("Milestones add up to more than the goal.");
 
     setLoading(true);
     try {
+      // AI screening before publish: show findings and let the organizer fix them.
+      if (!force) {
+        const r = await campaignPrecheck({
+          title, description, category, goal_amount: parseFloat(goal), organizer_email: user.email, milestone_count: plan.length,
+        }).catch(() => null);
+        if (r && r.score >= 30) { setPrecheck(r); setLoading(false); return; }
+      }
       const formData = new FormData();
       formData.append("title", title);
       formData.append("description", description);
@@ -63,11 +79,12 @@ export default function CreateCampaignPage() {
       formData.append("organizer_email", user.email);
       if (limitEnabled && dailyLimit) formData.append("daily_donor_limit", dailyLimit);
       if (image) formData.append("image", image);
+      if (plan.length) formData.append("milestones", JSON.stringify(plan.map((m) => ({ title: m.title, amount: Number(m.amount), description: m.description }))));
 
-      await createCampaign(formData);
-      router.push("/organizer/campaigns");
-    } catch {
-      setError("Failed to create campaign. Please try again.");
+      const created = await createCampaign(formData);
+      router.push(`/organizer/campaigns/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create campaign. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -171,6 +188,29 @@ export default function CreateCampaignPage() {
             />
           </div>
 
+          {/* ── Milestone escrow ── */}
+          <div className="rounded-2xl border-2 border-gray-100 overflow-hidden">
+            <button type="button" onClick={() => setUseEscrow(!useEscrow)}
+              className={`w-full flex items-center justify-between px-5 py-4 transition-all ${useEscrow ? "bg-green-50" : "bg-gray-50 hover:bg-gray-100"}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-xl ${useEscrow ? "bg-green-100 text-[#00b964]" : "bg-gray-100 text-gray-400"}`}><Flag size={16} /></div>
+                <div className="text-left">
+                  <p className={`text-sm font-bold ${useEscrow ? "text-gray-900" : "text-gray-500"}`}>Milestone-based fund release <span className="text-[10px] font-bold text-[#00b964] bg-white px-1.5 py-0.5 rounded ml-1">RECOMMENDED</span></p>
+                  <p className="text-xs text-gray-400">Funds stay in escrow and unlock per milestone after donors approve your proof</p>
+                </div>
+              </div>
+              <div className={`w-11 h-6 rounded-full relative transition-all duration-200 ${useEscrow ? "bg-[#00b964]" : "bg-gray-200"}`}>
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${useEscrow ? "left-6" : "left-1"}`} />
+              </div>
+            </button>
+            {useEscrow && (
+              <div className="px-5 pb-5 pt-4 bg-green-50/50 border-t border-green-100">
+                <MilestoneEditor goal={parseFloat(goal) || 0} value={milestones} onChange={setMilestones} />
+                {milestones.length === 0 && <p className="text-xs text-gray-400 mt-2">Add at least one milestone, or switch this off to receive funds without donor approval.</p>}
+              </div>
+            )}
+          </div>
+
           {/* ── Daily Donor Limit ── */}
           <div className="rounded-2xl border-2 border-gray-100 overflow-hidden">
             {/* Toggle header */}
@@ -255,6 +295,29 @@ export default function CreateCampaignPage() {
 
         </form>
       </div>
+      {precheck && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="h-1.5" style={{ background: "linear-gradient(90deg,#8b5cf6,#6366f1)" }} />
+            <div className="p-7">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-11 h-11 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center shrink-0"><Brain size={20} /></div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-extrabold text-gray-900">AI review before publishing</h3>
+                  <p className="text-sm text-gray-500">Donors and moderators will see this risk assessment. Fixing these usually builds trust.</p>
+                </div>
+                <RiskBadge score={precheck.score} />
+              </div>
+              <RiskSignals signals={precheck.signals} max={10} />
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setPrecheck(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#00b964,#00d4aa)" }}>Edit campaign</button>
+                <button onClick={(e) => { setPrecheck(null); handleSubmit(e as unknown as React.FormEvent, true); }}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-gray-500 border-2 border-gray-100 hover:bg-gray-50">Publish anyway</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
