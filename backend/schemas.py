@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 
 # ── Donor Schemas ──────────────────────────────────────────────
@@ -55,6 +55,8 @@ class CampaignOut(BaseModel):
     daily_donor_limit: Optional[float] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
+    risk_score: Optional[float] = None
+    risk_flags: Optional[list[Any]] = None
     created_at: datetime
 
     class Config:
@@ -127,6 +129,18 @@ class UtilizationOut(BaseModel):
     proof_url: Optional[str] = None
     category: str
     created_by: str
+    milestone_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    vendor_gstin: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
+    invoice_hash: Optional[str] = None
+    ocr_total: Optional[float] = None
+    ocr_confidence: Optional[float] = None
+    risk_score: Optional[float] = None
+    risk_flags: Optional[list[Any]] = None
+    status: Optional[str] = None
+    ledger_hash: Optional[str] = None
     created_at: datetime
 
     class Config:

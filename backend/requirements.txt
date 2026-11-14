@@ -4,3 +4,9 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 python-multipart
+httpx
+pypdf
+pypdfium2
+pillow
+pytesseract
+# Optional: public-chain anchoring (see contracts/README) — pip install web3

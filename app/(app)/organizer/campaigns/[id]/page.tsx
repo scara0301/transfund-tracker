@@ -2,11 +2,26 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { getCampaign, getCampaignDonations, closeCampaign, getStoredUser, fmtINR, fmtDate } from "@/lib/api";
+import { getCampaign, getCampaignDonations, closeCampaign, getStoredUser, getMilestones, getUtilizations, fmtINR, fmtDate, shortHash, type MilestoneState } from "@/lib/api";
 import { ArrowLeft, Users, Target, Clock, CheckCircle, TrendingUp, XCircle, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import CampaignUpdatesFeed from "@/components/CampaignUpdatesFeed";
 import PostUpdateForm from "@/components/PostUpdateForm";
+import MilestoneTimeline from "@/components/MilestoneTimeline";
+import UtilizationForm from "@/components/UtilizationForm";
+import ExpenseList, { type Expense } from "@/components/ExpenseList";
+import AIInsightsPanel from "@/components/AIInsightsPanel";
+import LedgerPanel from "@/components/LedgerPanel";
+import RiskBadge, { RiskSignals } from "@/components/RiskBadge";
+
+const TABS = [
+  { id: "donations", label: "💳 Donations" },
+  { id: "escrow", label: "🏁 Milestones" },
+  { id: "expenses", label: "🧾 Expenses" },
+  { id: "ai", label: "🧠 AI Insights" },
+  { id: "ledger", label: "⛓️ Ledger" },
+  { id: "updates", label: "📢 Updates" },
+] as const;
 
 const CATEGORY_META: Record<string, { emoji: string; gradient: string }> = {
   Education:  { emoji: "🎓", gradient: "from-blue-400 to-indigo-500" },
@@ -23,11 +38,12 @@ type Campaign = {
   id: number; title: string; description: string; category: string;
   goal_amount: number; raised_amount: number; status: string;
   image_url: string | null; created_at: string; close_reason?: string | null;
-  daily_donor_limit?: number | null;
+  daily_donor_limit?: number | null; risk_score?: number | null; risk_flags?: any[] | null;
 };
 
 type Donation = {
   id: number; donor_name: string; donor_email: string; amount: number; donated_at: string;
+  payment_method?: string | null; ledger_hash?: string | null; risk_score?: number | null;
 };
 
 export default function CampaignDetail() {
@@ -37,6 +53,10 @@ export default function CampaignDetail() {
   const [loading, setLoading]     = useState(true);
 
   const [updatesRefresh, setUpdatesRefresh] = useState(0);
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("donations");
+  const [escrow, setEscrow] = useState<MilestoneState | null>(null);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [finKey, setFinKey] = useState(0);
   const user = getStoredUser();
 
   const [showEndModal, setShowEndModal]   = useState(false);
@@ -46,11 +66,12 @@ export default function CampaignDetail() {
 
   const loadData = () => {
     if (!id) return;
-    Promise.all([getCampaign(Number(id)), getCampaignDonations(Number(id))])
-      .then(([c, d]) => { setCampaign(c); setDonations(d); })
+    Promise.all([getCampaign(Number(id)), getCampaignDonations(Number(id)), getMilestones(Number(id)), getUtilizations(Number(id))])
+      .then(([c, d, m, u]) => { setCampaign(c); setDonations(d); setEscrow(m); setExpenses(u); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
+  const refreshFinance = () => { loadData(); setFinKey((k) => k + 1); };
 
   useEffect(() => { loadData(); }, [id]);
 
@@ -153,6 +174,16 @@ export default function CampaignDetail() {
         </div>
       </div>
 
+      {(campaign.risk_score ?? 0) >= 30 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-amber-800 flex-1">AI screening flagged this campaign for review</p>
+            <RiskBadge score={campaign.risk_score} />
+          </div>
+          <RiskSignals signals={campaign.risk_flags} />
+        </div>
+      )}
+
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
@@ -195,8 +226,34 @@ export default function CampaignDetail() {
         </div>
       </div>
 
+      {/* ── Tabs ── */}
+      <div className="flex gap-1 overflow-x-auto bg-white rounded-2xl p-1.5 border border-gray-100 shadow-sm">
+        {TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition ${tab === t.id ? "text-white shadow" : "text-gray-500 hover:bg-gray-50"}`}
+            style={tab === t.id ? { background: "linear-gradient(135deg,#00b964,#00d4aa)" } : {}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "escrow" && (
+        <MilestoneTimeline key={finKey} campaignId={Number(id)} mode="organizer" userEmail={user?.email} goal={campaign.goal_amount} onChange={refreshFinance} />
+      )}
+
+      {tab === "expenses" && escrow && (
+        <div className="space-y-5">
+          <UtilizationForm key={escrow.milestones.filter((m) => m.status === "released").length} campaignId={Number(id)} organizerEmail={user?.email || ""}
+            milestones={escrow.milestones} spendable={escrow.funds.spendable} onCreated={refreshFinance} />
+          <ExpenseList items={expenses} milestoneTitles={Object.fromEntries(escrow.milestones.map((m) => [m.id, m.title]))} />
+        </div>
+      )}
+
+      {tab === "ai" && <AIInsightsPanel campaignId={Number(id)} refreshKey={finKey} />}
+      {tab === "ledger" && <LedgerPanel campaignId={Number(id)} title="Campaign ledger" />}
+
       {/* ── Donation Ledger ── */}
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+      {tab === "donations" && <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-50 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-lg">💳</span>
@@ -223,7 +280,8 @@ export default function CampaignDetail() {
                   <th className="px-6 py-3 font-semibold">Email</th>
                   <th className="px-6 py-3 font-semibold">Amount</th>
                   <th className="px-6 py-3 font-semibold">Date</th>
-                  <th className="px-6 py-3 font-semibold">Time</th>
+                  <th className="px-6 py-3 font-semibold">Method</th>
+                  <th className="px-6 py-3 font-semibold">Ledger</th>
                 </tr>
               </thead>
               <tbody>
@@ -244,8 +302,14 @@ export default function CampaignDetail() {
                       <td className="px-6 py-4 text-gray-400 text-xs">{d.donor_email}</td>
                       <td className="px-6 py-4 font-extrabold text-[#00b964]">{fmtINR(d.amount)}</td>
                       <td className="px-6 py-4 text-gray-500">{fmtDate(d.donated_at)}</td>
-                      <td className="px-6 py-4 text-gray-300 text-xs">
-                        {dt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                      <td className="px-6 py-4 text-gray-500 text-xs">
+                        {d.payment_method || "—"} <span className="text-gray-300">· {dt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
+                      </td>
+                      <td className="px-6 py-4 text-xs">
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-gray-400" title={d.ledger_hash || ""}>{shortHash(d.ledger_hash, 6)}</code>
+                          {(d.risk_score ?? 0) >= 30 && <RiskBadge score={d.risk_score} compact />}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -254,17 +318,17 @@ export default function CampaignDetail() {
             </table>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* ── Campaign Updates ── */}
-      {isActive && user?.email && (
+      {tab === "updates" && isActive && user?.email && (
         <PostUpdateForm
           campaignId={Number(id)}
           postedBy={user.email}
           onPosted={() => setUpdatesRefresh((k) => k + 1)}
         />
       )}
-      <CampaignUpdatesFeed campaignId={Number(id)} refreshKey={updatesRefresh} canDelete />
+      {tab === "updates" && <CampaignUpdatesFeed campaignId={Number(id)} refreshKey={updatesRefresh} canDelete />}
 
       {/* Meta footer */}
       <div className="flex items-center gap-4 text-xs text-gray-400 px-1">

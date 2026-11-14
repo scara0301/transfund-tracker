@@ -54,3 +54,6 @@ venv/
 # Temporary planning files
 Changes to make/
 
+
+# allow env templates
+!.env.example

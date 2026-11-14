@@ -1,8 +1,47 @@
-# TransFund Tracker
+# TransFund
 
-> **The transparent crowdfunding platform** — every rupee raised, tracked, and accounted for.
+> **Blockchain and AI-Powered Transparent Crowdfunding and Intelligent Fund Utilization Management System**
+>
+> An integrated platform for secure fundraising, blockchain-based financial transparency, AI-driven fraud detection, and accountable fund disbursement.
 
 A full-stack fundraising and fund transparency platform where donors can browse campaigns, donate, and see exactly how their money was spent — and where organizers manage campaigns, log utilizations with proof, and post live updates.
+
+---
+
+## v2: Blockchain + AI + INR payments
+
+| Pillar | What's implemented | Where |
+|---|---|---|
+| **Blockchain** | SHA-256 hash-chained ledger with proof-of-work; every donation, milestone plan, proof, vote, release and expense is a block | `backend/services/ledger.py` |
+| | Verification that detects edited/deleted blocks **and** database rows changed behind the ledger's back | `GET /ledger/verify` |
+| | Milestone-based escrow: funds unlock in order, only after donors approve proof (votes weighted by ₹ given, 20% quorum or 72h window) | `backend/services/escrow.py`, `routers/milestones.py` |
+| | `TransFundEscrow` Solidity contract enforcing the same release rules + Merkle-root anchoring of the ledger to any EVM chain | `contracts/` |
+| **AI** | Invoice OCR (Tesseract + PDF text) extracting vendor, GSTIN (checksum-validated, OCR-error corrected), invoice no., date, taxes, total | `backend/services/ocr.py` |
+| | Explainable fraud scoring for campaigns, donations and expenses: duplicate invoices, fake GSTINs, inflated claims, copy-pasted campaigns, scam language, off-platform payment requests, self-donations, robust-z amount anomalies… | `backend/services/fraud.py` |
+| | Expenditure analysis: category breakdown, milestone budget vs. spent, burn rate, insights and a 0–100 transparency score | `backend/services/analysis.py` |
+| **Full-stack** | Razorpay INR payments (UPI / cards / netbanking / wallets) with HMAC signature + webhook verification; demo checkout when no keys are set | `backend/routers/payments.py`, `components/DonateModal.tsx` |
+| | Milestone editor, expense logging with OCR prefill, donor voting, AI insights, Trust & Safety center, public ledger explorer (`/explorer`) | `components/`, `app/` |
+
+**Rules that are enforced, not just displayed:** expenses can't exceed released funds; milestones can't exceed the goal or release out of order; organizers can't vote on their own milestones; campaigns with money on the ledger can't be deleted (close them instead); the direct `/donations/` endpoint only works in demo mode, so real deployments can't record unpaid donations.
+
+### Configuration (`backend/.env`, see `backend/.env.example`)
+
+| Variable | Purpose |
+|---|---|
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Enable real payments (otherwise demo checkout) |
+| `RAZORPAY_WEBHOOK_SECRET` | Enable `POST /payments/webhook` (point Razorpay's `payment.captured` webhook at it) |
+| `CHAIN_RPC_URL`, `CHAIN_PRIVATE_KEY`, `CHAIN_CONTRACT_ADDRESS` | Enable public-chain anchoring (`pip install web3`, deploy with `contracts/deploy.py`) |
+| `ESCROW_QUORUM_BPS` / `ESCROW_VOTING_HOURS` | Voting rules (default 2000 = 20%, 72h) |
+| `LEDGER_DIFFICULTY` | Proof-of-work leading hex zeros (default 3) |
+
+Invoice OCR needs the Tesseract binary (`sudo apt install tesseract-ocr`, `brew install tesseract`, or the Windows installer). Without it, text PDFs still work and image OCR reports itself unavailable.
+
+### Tests
+
+```bash
+pip install pytest web3 "eth-tester[py-evm]"
+pytest            # backend integration tests (uses a throwaway `transfund_test` DB) + contract tests on an in-process EVM
+```
 
 ---
 
@@ -14,7 +53,7 @@ A full-stack fundraising and fund transparency platform where donors can browse 
 - **Proportional impact reports** — donors see their personal share of every utilization (your ₹500 bought 3 books, your ₹200 covered transport, etc.)
 - **Campaign updates feed** — organizers post progress updates with file attachments
 - **Auto-completion** — campaigns mark themselves as completed the moment the goal is reached
-- **Cascading delete** — closing a campaign cleans up donations, receipts, utilizations, updates, and the uploaded image atomically
+- **Immutable financial history** — campaigns with donations or expenses can be ended but not deleted; unfunded campaigns can still be removed
 - **Receipt generation** — every donation gets a uniquely numbered receipt (`RCP-00001` format)
 
 ---
@@ -130,6 +169,8 @@ python -m uvicorn main:app --reload --port 8000
 API docs at [http://localhost:8000/docs](http://localhost:8000/docs)
 
 > Backend reads DB credentials from `backend/.env`. Default: `postgres` / `1234` / `mini`
+>
+> On first start after upgrading, existing donations and expenses are automatically backfilled onto the ledger.
 
 ---
 

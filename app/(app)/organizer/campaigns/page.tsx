@@ -61,8 +61,8 @@ export default function CampaignsPage() {
     try {
       await deleteCampaign(id);
       setCampaigns((prev) => prev.filter((c) => c.id !== id));
-    } catch {
-      alert("Failed to delete campaign.");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete campaign.");
     } finally {
       setDeleting(null);
     }

@@ -1,58 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import Optional
-from datetime import datetime, date
 
 from database import get_db
 import models
 import schemas
+from routers import payments
+from services import donation_service
 
 router = APIRouter(prefix="/donations", tags=["donations"])
 
 
 @router.post("/")
 def make_donation(donation: schemas.DonationCreate, db: Session = Depends(get_db)):
-    campaign = (
-        db.query(models.Campaign)
-        .filter(models.Campaign.id == donation.campaign_id)
-        .first()
+    """
+    Direct donation without a payment gateway. Only available in demo mode —
+    with Razorpay configured, donations must go through /payments/order + /payments/verify.
+    """
+    if payments.provider() != "demo":
+        raise HTTPException(status_code=400, detail="Use /payments/order to donate")
+    campaign = db.get(models.Campaign, donation.campaign_id)
+    donation_service.check_can_donate(db, campaign, donation.donor_email, donation.amount)
+    return donation_service.record_donation(
+        db, campaign, donation.donor_name, donation.donor_email, donation.amount,
+        donor_id=donation.donor_id, payment_method=donation.payment_method or "Direct",
+        transaction_id=donation.transaction_id,
     )
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    if campaign.status != "active":
-        raise HTTPException(status_code=400, detail="This campaign is no longer accepting donations")
 
-    if campaign.daily_donor_limit:
-        today_start = datetime.combine(date.today(), datetime.min.time())
-        today_total = db.query(func.sum(models.Donation.amount)).filter(
-            models.Donation.campaign_id == donation.campaign_id,
-            models.Donation.donor_email == donation.donor_email,
-            models.Donation.donated_at >= today_start,
-        ).scalar() or 0
-        if today_total + donation.amount > campaign.daily_donor_limit:
-            remaining = max(0, campaign.daily_donor_limit - today_total)
-            raise HTTPException(
-                status_code=429,
-                detail=f"DAILY_LIMIT_REACHED|{campaign.daily_donor_limit:.0f}|{remaining:.0f}"
-            )
 
-    db_donation = models.Donation(**donation.dict())
-    db.add(db_donation)
-    campaign.raised_amount += donation.amount
-    if campaign.raised_amount >= campaign.goal_amount:
-        campaign.status = "completed"
-    db.commit()
-    db.refresh(db_donation)
-
+def _extra(d: models.Donation) -> dict:
     return {
-        "id": db_donation.id,
-        "campaign_id": db_donation.campaign_id,
-        "campaign_title": campaign.title,
-        "donor_name": db_donation.donor_name,
-        "donor_email": db_donation.donor_email,
-        "amount": db_donation.amount,
-        "donated_at": db_donation.donated_at.isoformat() + "Z",
+        "payment_method": d.payment_method,
+        "transaction_id": d.transaction_id,
+        "ledger_hash": d.ledger_hash,
+        "risk_score": d.risk_score,
     }
 
 
@@ -88,6 +69,7 @@ def get_donations(
                 "donor_email": d.donor_email,
                 "amount": d.amount,
                 "donated_at": d.donated_at.isoformat() + "Z",
+                **_extra(d),
             }
             for d, title in rows
         ]
@@ -121,6 +103,7 @@ def get_donations(
                             "donor_email": d.donor_email,
                             "amount": d.amount,
                             "donated_at": d.donated_at.isoformat() + "Z",
+                            **_extra(d),
                         }
                         for d in donations
                     ],
@@ -143,6 +126,7 @@ def get_donations(
                 "donor_email": d.donor_email,
                 "amount": d.amount,
                 "donated_at": d.donated_at.isoformat() + "Z",
+                **_extra(d),
             }
             for d in rows
         ]

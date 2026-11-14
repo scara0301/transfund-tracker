@@ -41,6 +41,9 @@ export default function DonorLayout({
             className={`hover:text-[#00b964] transition ${pathname === "/donor/dashboard" ? "text-[#00b964] font-bold" : ""}`}>
             Dashboard
           </a>
+          <a href="/explorer" className="hover:text-[#00b964] transition">
+            Ledger
+          </a>
           <button
             onClick={handleLogout}
             className="flex items-center gap-1.5 px-4 py-2 rounded-full border-2 border-gray-200 hover:border-red-400 hover:text-red-500 hover:bg-red-50 text-gray-600 transition-all duration-200 text-sm font-semibold"

@@ -30,7 +30,7 @@ def create_update(
         upload_dir = os.path.join(os.path.dirname(__file__), "..", "uploads", "updates")
         os.makedirs(upload_dir, exist_ok=True)
         # Prefix with timestamp to avoid collisions; keep original filename for download
-        safe_name = f"upd_{campaign_id}_{int(time.time())}_{file.filename.replace(' ', '_')}"
+        safe_name = f"upd_{campaign_id}_{int(time.time())}_{os.path.basename(file.filename).replace(' ', '_')}"
         file_path = os.path.join(upload_dir, safe_name)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
